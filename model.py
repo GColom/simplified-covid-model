@@ -10,12 +10,17 @@ import numpy as np
 from   scipy import stats
 from   tqdm  import tqdm
 
+# Global parameters to keep track of run parameters
+
+_NORM_ = False
+_DT_   = 1./48
+
 # Social activity rate
 # The example is a quite strong lockdown 30 days after the introduction of patient zero.
 m_test = (np.array([0, 30, 60, np.inf]), np.array([1., .15, .15, .5]))
 
 # Hospitalisation fraction of symptomatic patients
-gamma_test = (np.array([0., np.inf]), np.array([.85, .5]))
+gamma_test = (np.array([0., np.inf]), np.array([.85, .85]))
 
 # Parameters of \rho_E over time
 pars_e_test = (np.array([0., np.inf]), np.array([2.,2.]), np.array([.1,.1]))
@@ -62,8 +67,8 @@ def propagate_forward(t, max_t, donor, acceptors, kernel_tuple, branching_ratios
     for a, r in zip(acceptors, branching_ratios):
         a[t + i0 : t + i0 + lk] += r * buffer
 
-def run_simulation(days = 60, dt = 1./24., beta = 1/1.2, alpha = .14, 
-                    N = 886891, norm = False, m = m_test, gamma = gamma_test, 
+def run_simulation(days = 60, dt = _DT_, beta = 1/1.2, alpha = .14, 
+                    N = 886891, norm = _NORM_, m = m_test, gamma = gamma_test, 
                     pars_e = pars_e_test, pars_i = pars_i_test, 
                     pars_h = pars_h_test, pars_a = pars_a_test):
     '''
@@ -119,6 +124,9 @@ def run_simulation(days = 60, dt = 1./24., beta = 1/1.2, alpha = .14,
         Time series for the sum of all compartments, to check consistency.
 
     '''
+    global _DT_, _NORM_
+    _DT_ = dt
+    _NORM_ = norm
     # Calculate number of iterations
     max_step = int(np.rint(days / dt))
     
@@ -215,6 +223,7 @@ def run_simulation(days = 60, dt = 1./24., beta = 1/1.2, alpha = .14,
         P = S[t] + E[t] + A[t] + R[t]
         
         # Evolve contagion flow
+
         Phi_SE[t] += beta * cur_m * S[t] * (A[t]) * dt / P
         
         # Propagate flows
@@ -240,10 +249,37 @@ def run_simulation(days = 60, dt = 1./24., beta = 1/1.2, alpha = .14,
     t = np.array([t for t in range(max_step+1)])
     return (t, S, E, I, H, A, R, TOT)
 
-def test_model(days = 100, dt = 1/48, norm = False):
+def simulate_perturbation(offset, duration, reference_m, m_perturbation_scaling, 
+                          dt = _DT_, beta = 1/1.2, alpha = .14, 
+                          N = 886891, norm = _NORM_, m = m_test, gamma = gamma_test, 
+                          pars_e = pars_e_test, pars_i = pars_i_test, 
+                          pars_h = pars_h_test, pars_a = pars_a_test):
+    # First calculate total duration of simulation run
+    total_duration = offset + duration
+    
+    # Then add a mobility breakpoint at the beginning of the perturbation
+    reference_m_days, reference_m_vals = reference_m
+    
+    final_m_days = np.concatenate((reference_m_days[reference_m_days < offset], 
+                                   np.array([offset]), 
+                                   reference_m_days[reference_m_days > offset]))
+    final_m_vals = np.concatenate((reference_m_vals[reference_m_days < offset],
+                                   np.array([reference_m_vals[reference_m_days < offset][-1]]),
+                                   reference_m_vals[reference_m_days > offset]))
+    final_m_vals[final_m_days >= offset] *= m_perturbation_scaling
+
+    print(final_m_days)
+    print(final_m_vals)
+    modified_m = (final_m_days, final_m_vals)
+    return run_simulation(days = offset + duration, dt = dt, beta = beta, alpha = alpha, 
+                          N = N, norm = norm, m = modified_m, gamma = gamma, 
+                          pars_e = pars_e, pars_i = pars_i, 
+                          pars_h = pars_h, pars_a = pars_a)
+
+def test_model(days = 200, dt = 1/48, norm = False):
     print("Simulate", days, "days with a {:.2f}".format(dt), "day resolution.")
     print("The example is a quite strong lockdown 30 days after the introduction of patient zero.")
-    t,s,e,i,h,a,r,tot = run_simulation(days = 100, dt = dt, norm = norm)
+    t,s,e,i,h,a,r,tot = run_simulation(days = 200, dt = dt, norm = norm)
 #%% Graphics
     from matplotlib import pyplot as plt
      
