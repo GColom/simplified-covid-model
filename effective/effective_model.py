@@ -17,7 +17,7 @@ _DT_   = 1./48
 
 # Social activity rate
 # The example is a quite strong lockdown 30 days after the introduction of patient zero.
-m_test = (np.array([0, 30, 60, np.inf]), np.array([1., .15, .15, .5]))
+m_test = (np.array([0, 20, 60, np.inf]), np.array([1., .15, .15, .5]))
 
 # Parameters of \rho_E over time
 pars_e_test = (np.array([0., np.inf]), np.array([2.,2.]), np.array([.1,.1]))
