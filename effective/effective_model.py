@@ -270,8 +270,15 @@ def test_model(days = 200, dt = 1/48, norm = False):
     plt.xlim([0, max(t * dt)])
     plt.xlabel('Days since patient zero introduction')
     plt.ylabel('People')
+
+    import pandas as pd
     
+    df = pd.DataFrame(data = {'t': t*dt, 'S': s, 'E': e,
+                              'I': i, 'U': a, 'R': r})
+
+    df.index = df.t
+    df.to_csv('out.csv') 
     plt.show()
 
 if __name__ == "__main__":
-    test_model(norm = True)
+    test_model(norm = False)

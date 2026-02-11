@@ -24,7 +24,8 @@ a       = T_u**2/sigma_u**2
 b       = T_u/sigma_u**2
 
 def sceq_mu(x, beta, c_0, m, T_u, T_e, alpha, a):
-    return (1-(a**a)/(x+a)**a)*np.exp(-T_e*x/T_u) - x/(T_u*c_0*beta*m)
+    ret = (1-(a**a)/(x+a)**a)*np.exp(-T_e*x/T_u) - x/(T_u*c_0*beta*m)
+    return ret.real
 
 def Fprime(x, beta, c_0, m, T_u, T_e, alpha, a):
     return np.exp(-T_e/T_u * x) * ((a/(x+a))**a * ( a/(x+a) + T_e/T_u) - T_e/T_u)
@@ -51,8 +52,10 @@ def find_root(c_0):
 dt = 1./48
 
 offset   = 45 
+#offset   = 10 
 duration = 7 
 end      = 90
+#end      = 40 
 
 startpoints = np.arange(offset, end, duration, dtype = int)
 
@@ -61,6 +64,7 @@ n_pert_runs = len(startpoints)
 m_0   = (np.array([0, np.inf]), np.array([m_base, m_base]))
  
 sim_0 = m.run_simulation(days = 110, m = m_0, N = 1e6, dt = dt, norm = True)
+#sim_0 = m.run_simulation(days = 50, m = m_0, N = 1e6, dt = dt, norm = True)
 
 pertp = [] # Store +5% simulations
 pertm = [] # Store -5% simulations
@@ -118,6 +122,8 @@ ax1.set_xlim(left = 30., right = 100)#dt * sim_0[0].max())
 
 
 c = sim_0[1]/(sim_0[1]+sim_0[2]+sim_0[4]+sim_0[5])
+
+[print(c_) for c_ in c]
 
 # with open("./c_dump.txt", mode= "w") as fdump:
 #     np.savetxt(fdump,c)

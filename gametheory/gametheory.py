@@ -402,7 +402,7 @@ def test_model(days = 200, beta0 = 1/1.2, dt = 1/48, norm = True):
     #plt.legend()
     
     plt.tight_layout()
-    plt.savefig("./pictures/gt.pdf", dpi = 300, transparent = True)
+    #plt.savefig("./pictures/gt.pdf", dpi = 300, transparent = True)
 
     figbeta, axbeta = plt.subplots()
     beta = 2*beta0 * (1. + (red-1.)*nc)/(1.+red)
