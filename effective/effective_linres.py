@@ -10,6 +10,7 @@ import effective_model as m
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import root_scalar
+from scipy.optimize.elementwise import bracket_root 
 
 T_u     = 5.5
 sigma_u = 2.3
@@ -27,6 +28,10 @@ def sceq_mu(x, beta, c_0, m, T_u, T_e, alpha, a):
     ret = (1-(a**a)/(x+a)**a)*np.exp(-T_e*x/T_u) - x/(T_u*c_0*beta*m)
     return ret.real
 
+def eq_prime(x, beta, n_0, s, T_u, T_e, alpha, a):
+    ret = Fprime(x, beta, n_0, s, T_u, T_e, alpha, a) - 1/(T_u*s*beta*n_0)
+    return ret.real
+
 def Fprime(x, beta, c_0, m, T_u, T_e, alpha, a):
     return np.exp(-T_e/T_u * x) * ((a/(x+a))**a * ( a/(x+a) + T_e/T_u) - T_e/T_u)
 
@@ -40,13 +45,19 @@ def sus_num(x, beta, c_0, m, T_u, T_e, alpha, a):
 def sus_denom(x, beta, c_0, m, T_u, T_e, alpha, a):
     return (m - T_u * beta  * c_0 * m**2 * Fprime(x, beta, c_0, m, T_u, T_e, alpha, a))
 
+
 def find_root(c_0):
     try:
-        ret = root_scalar(sceq_mu, bracket = (- 10, -0.000001, ), method = 'bisect',
+        ret = root_scalar(sceq_mu, bracket = (- 10, 10), method = 'bisect',
                     args=(beta, c_0, m_base, T_u, T_e, alpha, a))
     except ValueError:
-        ret = root_scalar(sceq_mu, bracket = (0.000001, 10., ), method = 'bisect',
-                    args=(beta, c_0, m_base, T_u, T_e, alpha, a))
+        print("QUALCOSA é SUCCESSO")
+    #    ret = root_scalar(sceq_mu, bracket = (1e-12, 10.), method = 'bisect',
+    #                args=(beta, c_0, m_base, T_u, T_e, alpha, a))
+    #ret = root_scalar(sceq_mu, x0 = last_mu, fprime = eq_prime, method = 'newton',
+    #                args=(beta, c_0, m_base, T_u, T_e, alpha, a))
+    #print(ret.flag)
+
     return ret
 
 dt = 1./48
@@ -130,6 +141,7 @@ c = sim_0[1]/(sim_0[1]+sim_0[2]+sim_0[4]+sim_0[5])
 
 r_objs = np.array([find_root(element) for element in c])
 mus    = np.array([ro.root for ro in r_objs])
+print(mus[0])
 
 
 susceptivities = np.zeros(shape = (len(mus)))
@@ -149,8 +161,8 @@ ax2.plot(sim_0[0]*dt, mus , label = "$\mu$", linestyle = "dashed",
          color = "C2", linewidth = 1.5)
 ax2.plot(sim_0[0]*dt, susceptivities, label = r"$\frac{d\mu}{ds}$", 
                       linestyle = "-.", color = "C1")
-ax2.plot(sim_0[0][:-2]*dt, (mus[1:] - mus[:-1])[1:] -(mus[1:] - mus[:-1])[:-1], label = "$\mu$", linestyle = "dashed", 
-         color = "C2", linewidth = 1.5)
+#ax2.plot(sim_0[0][:-2]*dt, (mus[1:] - mus[:-1])[1:] -(mus[1:] - mus[:-1])[:-1], label = "$\mu$", linestyle = "dashed", 
+#         color = "C2", linewidth = 1.5)
 ax2.plot(sim_0[0]*dt, c, label = "$c_0(t)$", linestyle = "dashed", color = "C4")
 ax2.plot(sim_0[0]*dt, denominators, label = r"$m (1 - c_0 T_u \beta m F'(\mu))$",
                       linestyle = "dashed", color = "C5")

@@ -13,25 +13,30 @@ sigma_U = 2.3
 alpha   = T_U**2/sigma_U**2
 beta    = T_U   /sigma_U**2
 
+mu = 2
+sigma = 0.2
+
 print("Run with "+chr(945)+f" = {alpha:.3f}, "+chr(946)+f" = {beta:.3f}.")
 
 def a(t, alpha, beta):
     return mittag_leffler(t**alpha, 
                                                          alpha, 1)
-
 def gamma_distrib(t, alpha, beta):
     return beta**alpha * t**(alpha - 1) * np.exp(-beta*t) / gamma(alpha)
 
-ts   = np.linspace(-1, 10, 5000)
-mlvs = a(ts, alpha, beta).real
+def gaussian(t, mu, sigma):
+    return np.exp(-(t-mu)**2/2*(sigma**2) / (np.sqrt(2*np.pi)*sigma))
 
-plt.plot(ts, mlvs, zorder = 0, linewidth = 2, 
-         linestyle = 'dashed', label = r'$a(t, \alpha, \beta)$')
+ts   = np.linspace(-1, 100, 5000)
+#mlvs = a(ts, alpha, beta).real
+
+#plt.plot(ts, mlvs, zorder = 0, linewidth = 2, 
+#         linestyle = 'dashed', label = r'$a(t, \alpha, \beta)$')
 
 gvs = np.zeros_like(ts)
 
-for k in range(1, 9):
-    gvs += gamma_distrib(ts, k * alpha, beta)
+for k in range(1, 100):
+    gvs += gaussian(ts, k*mu, k*sigma)#gamma_distrib(ts, k * alpha, beta)
     plt.plot(ts, gvs, zorder = -1, label = fr'$a_{k}(t, \alpha, \beta)$')
 
 plt.xlim(ts.min(), ts.max())

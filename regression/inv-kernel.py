@@ -16,8 +16,8 @@ beta    = T_U   /sigma_U**2
 # NdC Stesse definizioni di alpha e beta ma per evitare conflitti meglio rinominare
 # tutto.
 
-a       = T_u**2/sigma_u**2
-b       = T_u/sigma_u**2
+a       = T_U**2/sigma_U**2
+b       = T_U/sigma_U**2
 
 print("Run with "+chr(945)+f" = {alpha:.3f}, "+chr(946)+f" = {beta:.3f}.")
 print(f"Gamma mean value T_U = {T_U:.1f}, 1/T_U = {1/T_U:.4f}.")
@@ -83,7 +83,7 @@ kappa = 0.2
 
 #ts = np.linspace(0, 100, 1000)
 
-lrs = lrt(ts, 0, sigma, kappa)
+lrs = lrt_Udot(ts, 0, 2, 1.8, 10 , T_U)
 
 conv = np.convolve(mlvs, lrs)[:ts.shape[0]]
 

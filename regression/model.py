@@ -14,6 +14,10 @@ from pymittagleffler import mittag_leffler
 
 from utilities import *
 
+# GLOBAL DEFAULTS
+
+_DT_ = 1./48.
+
 # Experimental data import
 
 df = pd.read_csv('data/COVID_data.csv',
@@ -27,54 +31,45 @@ data_beg_day  = df.days.min()
 print("Data begins on", data_beg_date, ', corresponding to day n.', data_beg_day)
 
 new_positives = (df['new_positives'].rolling(7, center = False, min_periods = 1)
-                                    .mean().to_numpy())
+                                    .mean().to_numpy())[3:366]
 
 from matplotlib import pyplot as plt
 
-plt.figure()
-plt.plot(df.index, new_positives)
-plt.show()
-
-# Global parameters to keep track of run parameters
-
-_NORM_ = False
-_DT_   = 1./48
-
-T_U     = 5.5
-sigma_U = 2.3
-
-
 # Transcendental equation that determines the Local Lyapunov exponent (LLE) mu.
-def eq_mu(x, beta, n_0, m, T_u, T_e, alpha, a):
-    return (1-(a**a)/(x+a)**a)*np.exp(-T_e*x/T_u) - x/(T_u*n_0*beta*m)
+def eq_mu(x, beta, n_0, s, T_u, T_e, a):
+    ret = ((1-(a**a)/(x+a)**a)*np.exp(-T_e*x/T_u) - x/(T_u*n_0*beta*s))
+    return ret.real 
 
 # Auxiliary function in the calculation of the LLE susceptivity.
-def Fprime(x, beta, n_0, m, T_u, T_e, alpha, a):
+def Fprime(x, beta, n_0, s, T_u, T_e, a):
     return np.exp(-T_e/T_u * x) * ((a/(x+a))**a * ( a/(x+a) + T_e/T_u) - T_e/T_u)
 
+def eq_prime(x, beta, n_0, s, T_u, T_e, a):
+    ret = Fprime(x, beta, n_0, s, T_u, T_e, a) - 1/(T_u*s*beta*n_0)
+    return ret.real
+
 # Root finding for the LLE.
-def mu(beta, n_0, s, T_u, T_e, alpha, a):
-    #try:
-    #    ret = root_scalar(eq_mu, bracket = (- 10, -1e-7, ), method = 'bisect',
-    #                args=(beta, n_0, s, T_u, T_e, alpha, a))
-    #except ValueError:
-    #    ret = root_scalar(eq_mu, bracket = (1e-7, 10., ), method = 'bisect',
-    #                args=(beta, n_0, s, T_u, T_e, alpha, a))
-    ret = root_scalar(eq_mu, x0 = 0., x1 = 0.5, method = 'secant',
-                    args=(beta, n_0, s, T_u, T_e, alpha, a))
+def mu(beta, n_0, s, T_u, T_e, a):
+    tiny = 1e-12 # Exclude the root in 0, and stay out of its attraction basin.
+    try:
+        ret = root_scalar(eq_mu, bracket = (-5, -tiny), method = 'bisect',
+                    args=(beta, n_0, s, T_u, T_e, a))
+    except ValueError:
+        ret = root_scalar(eq_mu, bracket = (tiny, 10.), method = 'bisect',
+                    args=(beta, n_0, s, T_u, T_e, a))
     return ret.root
 
 # Susceptivity computation.
-def susceptivity(x, beta, n_0, s, T_u, T_e, alpha, a):
-    return x/(s - T_u * beta * n_0 * s**2 * Fprime(x, beta, n_0, s, T_u, T_e, alpha, a))
+def susceptivity(x, beta, n_0, s, T_u, T_e, a):
+    return x/(s - T_u * beta * n_0 * s**2 * Fprime(x, beta, n_0, s, T_u, T_e, a))
 
-def k(t, alpha, beta):
-    return beta**alpha * t**(alpha - 1) * mittag_leffler(beta**alpha * t**alpha, 
-                                                         alpha, alpha)*np.exp(-beta*t)
+def k(t, a, b):
+    return b**a * t**(a - 1) * mittag_leffler(b**a * t**a, a, a)*np.exp(-b*t)
+
 def lrt_Udot(t, t0, mu, dmuds, U0, T_U):
     kappa = U0*dmuds/T_U
     sigma = mu/T_U
-    return kappa*np.exp(sigma*(t-t0))*(sigma*(t-t0) +1)
+    return kappa*np.exp(sigma*(t-t0))*(sigma*(t-t0) + 1)
 
 # Default parameter values
 
@@ -102,6 +97,8 @@ dist_u_test = (discrete_gamma,
 dist_r_test = (discrete_gamma,
                np.array([0., np.inf]), np.array([180, 180]), np.array([10,10]))
 
+s_assumption = lambda idx : idx if idx >= 0 else 0
+
 class model:
     def __init__(self, dt = 1./24., 
                  beta = 1./1.2, 
@@ -113,17 +110,18 @@ class model:
                  dist_u = dist_u_test, 
                  dist_r = dist_r_test):
 
-        self.N      = N
-        self.dt     = dt 
+        self.N           = N
+        self.dt          = dt 
+        self.pts_per_day = int(1/dt)
         print("init with dt =", self.dt)
-        self.beta   = beta
+        self.beta        = beta
         print("init with beta =", self.beta)
-        self.alpha  = alpha
-        self.norm   = norm
-        self.dist_e = dist_e
-        self.dist_i = dist_i
-        self.dist_u = dist_u
-        self.dist_r = dist_r
+        self.alpha       = alpha
+        self.norm        = norm
+        self.dist_e      = dist_e
+        self.dist_i      = dist_i
+        self.dist_u      = dist_u
+        self.dist_r      = dist_r
  
         self.max_step = 0 # Internal pointer to maximum time for which the contents
                           # of the flows are fully calculated, i.e. point from which
@@ -225,8 +223,11 @@ class model:
         s_t    = s[0] / self.dt
         s_vals = s[1]
 
-        s_array= np.array([s_vals[np.searchsorted(s_t, t, side = 'right') - 1] 
+        s_array= np.array([s_vals[
+            s_assumption(np.searchsorted(s_t, t, side = 'right') - 1)] 
                            for t in range(self.max_step, end_step+1)])
+        plt.figure()
+        plt.plot(np.arange(0., t_end, self.dt), s_array[:-1])
         
         tau_t    = variants[0] / self.dt
         tau_vals = variants[1]
@@ -360,26 +361,9 @@ class model:
         (ts, s, e, u, i, r, tot, 
          phi_se, phi_eu, phi_ui, phi_ur, phi_ir, phi_rs, phi_v) = sim_tuple
        
-        print(self.max_step)
-        print(self.S[self.max_step], s[0])
-        print(self.E[self.max_step], e[0])
-        print(self.U[self.max_step], u[0])
-        print(self.I[self.max_step], i[0])
-        print(self.R[self.max_step], r[0])
-        
-        print(self.Phi_SE[self.max_step], phi_se[0])
-        print(self.Phi_EU[self.max_step], phi_eu[0])
-        print(self.Phi_UI[self.max_step], phi_ui[0])
-        print(self.Phi_IR[self.max_step], phi_ir[0])
-        print(self.Phi_UR[self.max_step], phi_ur[0])
-        print(self.Phi_RS[self.max_step], phi_rs[0])
-        print(self.Phi_V[self.max_step],  phi_v[0])
-        
         # Assuming self.max_step is the last valid point on the system
         # trajectory, we need to have a final size equal to self.max_step
         # + self.S.size, or any valid compartment.
-        
-        print(ts.max())
         
         self.ts= np.pad(self.ts,(0, max(0, self.max_step +ts.size - self.ts.size)))
         self.ts[self.max_step+1:] = ts[1:]
@@ -429,20 +413,136 @@ class model:
                 self.Phi_SE, self.Phi_EU, self.Phi_UI, self.Phi_IR, 
                 self.Phi_UR, self.Phi_RS, self.Phi_V)
            
-    def fit_to_data(self, fit_period, n_periods,
-                    rel_t1, rel_t2, s0, variants, vaccines, 
-                    data = new_positives, alignment = 0):
+    def __gradient(self, t0, t1, t2, s_guess, variants, vaccines,
+                   data = new_positives, alignment = 0):
+
+        # Run simulation with the passed parameters 
+        run_res = self.run(t2, s_guess, variants = variants, vaccines = vaccines)
+        (ts,s,e,u,i,r,tot,phi_se,phi_eu,phi_ui,phi_ur,phi_ir,phi_rs,phi_v) = run_res
+        
+        timestep0 = t0 * self.pts_per_day
+        timestep1 = t1 * self.pts_per_day
+        timestep2 = t2 * self.pts_per_day
+
+        # Select only the part of the simulation between t1 and t2.
+        phi_pred = phi_ui[timestep1 : timestep2]# : self.pts_per_day]
+
+        # Then sum all the contributes of each dt for each day.        
+        phi_pred = phi_pred.reshape(-1, self.pts_per_day).mean(axis=1)
+        
+        assert phi_pred.shape[0] == (t2 - t1)
+
+        # Compute the gap between the prediction and the data.
+
+        gap = phi_pred - data[t1 : t2]
+
+        print(s_guess[0])
+        print(s_guess[1])
+        print(gap)
+        
+        plt.figure()
+        plt.plot(new_positives)
+        plt.plot(ts, phi_ui[:ts.shape[0]])
+        plt.plot(np.arange(t1, t2, 1.), gap)
+        plt.xlim(0, 200)
+        plt.twinx()
+        plt.vlines(s_guess[0], ymin = 0., ymax = 1.5, linewidth = 0.5,
+                   linestyle = 'dashed', color = 'C1')
+        plt.vlines(t0, ymin = 0., ymax = 1.5, linewidth = 1.5,
+                   linestyle = 'dashed', color = 'C1')
+        plt.vlines(t1, ymin = 0., ymax = 1.5, linewidth = 1.5,
+                   linestyle = 'dashed', color = 'green')
+        plt.vlines(t2, ymin = 0., ymax = 1.5, linewidth = 1.5,
+                   linestyle = 'dashed', color = 'red')
+        plt.plot(s_guess[0], s_guess[1])
+        plt.ylim(0., 1.5)
+        plt.show()
+
+        # Now compute the linear response for the flow.
+        # First compute the concentration of Susceptibles
+
+        n_0 = s[timestep0] / (s[timestep0]+e[timestep0]+u[timestep0]+r[timestep0])
+        
+        # We also need the number of Unreported cases at t0. 
+        U0 = u[timestep0]
+
+        # We need to get the parameters of the current Unreported
+        # and Exposed exit distribution. Use t0 as rho_*_t are indexed
+        # in day units.
+        # We also get the current scalar sociability value cur_s.
+
+        cur_rho_e_idx = np.searchsorted(self.rho_e_t, t0, side = 'right') - 1
+        cur_rho_u_idx = np.searchsorted(self.rho_u_t, t0, side = 'right') - 1
+        cur_s_idx     = s_assumption(np.searchsorted(s_guess[0], t0, side = 'right') - 1)
+        
+        T_E     = self.rho_e_mus[cur_rho_e_idx]    * self.dt
+        T_U     = self.rho_u_mus[cur_rho_u_idx]    * self.dt
+        sigma_U = self.rho_u_sigmas[cur_rho_u_idx] * self.dt
+        cur_s   = s_guess[1][cur_s_idx]
+        
+        # These are the parameters of the U gamma distribution.
+
+        a = T_U**2/sigma_U**2
+        b = T_U/sigma_U**2
+
+        # We can now compute the local Lyapunov exponent. 
+        
+        mu_   = mu(self.beta, n_0, cur_s, T_U, T_E, a)
     
-        pts_per_day = int(1./self.dt)
+        print(r'\mu =', mu_)
+        
+        # And its susceptivity.
+
+        dmuds_ = susceptivity(mu_, self.beta, n_0, cur_s, T_U, T_E, a)
+
+        print(r'\dv{\mu}{s} =', dmuds_)
+        
+        # Generate fit timesteps in units of days and 
+        # convolution timesteps in units of dt.
+
+        conv_timesteps = np.arange(t1, t2, self.dt)
+    
+        lrt_Udot_vals = lrt_Udot(np.arange(t0, t2, self.dt), t0, mu_, dmuds_, U0, T_U)
+        #plt.figure()
+        #plt.plot(np.arange(t0, t2, self.dt), lrt_Udot_vals)
+        #plt.show()
+
+        # Include the symptomatic fraction in the kernel.
+        k_vals = self.alpha * k(conv_timesteps, a, b).real
+
+        conv = np.convolve(k_vals,lrt_Udot_vals)[timestep1-timestep0:timestep2-timestep0]
+        
+        # NOW WE CAN COMPUTE THE ERROR GRADIENT
+        # FIRST RESAMPLE THE CONVOLUTION EACH pts_per_day
+
+        conv = conv[::self.pts_per_day]
+        
+        # dEds is just the scalar product of conv with gap.
+        
+        print('gap.shape = ', gap.shape)
+        print('conv.shape = ', conv.shape)
+        
+        gradient = np.dot(gap, conv)/(t2-t1)
+
+        print("Gradient is ", gradient)
+
+        return gradient, run_res
+
+    def fit_to_data(self, fit_period, n_periods,
+                    rel_t1, rel_t2, s0, s1, variants, vaccines, 
+                    data = new_positives, alignment = 0,
+                    gtol = 1e-3, dgtol = 1e-3, dstol = 1e-3):
     
         if (rel_t2 > fit_period) or (rel_t2 < rel_t1) or (rel_t1 > fit_period):
             raise ValueError('Error in the definition of fit boundaries.')
         
         # Generate fitting points.
-    
-        t0s = np.arange(0, n_periods, 1., dtype = int) * fit_period
-        t1s = np.arange(0, n_periods, 1., dtype = int) * fit_period + rel_t1
-        t2s = np.arange(0, n_periods, 1., dtype = int) * fit_period + rel_t2
+        t0s = alignment+np.arange(0, n_periods, 1., dtype = int) * fit_period - rel_t1
+        t1s = alignment+np.arange(0, n_periods, 1., dtype = int) * fit_period
+        t2s = alignment+np.arange(1, n_periods + 1, 1., dtype = int) * fit_period #+ rel_t2
+        t1s = np.array([30, 45, 75, 100]) 
+        t0s = t1s - rel_t1
+        t2s = np.concatenate((t1s[1:], np.array([120])))
 
         print(t0s)
         print(t1s)
@@ -456,148 +556,79 @@ class model:
         print(s_fit[0])
         print(s_fit[1])
         
-        #
         # FITTING 
-        #
+
         # Initialize lists that will contain values of the error derivative
         # and s guesses.
 
         dEds = [] # Derivative
-        s_sm = [] # "s secant method"
+        s_rf = [] # "s root finding"
         
-        # The method of secants requires two initial guesses for iteration,
-        # so we must handle them manually.
+        # Derivative-free methods need two initial guesses.
 
-        # FIRST OVERALL GUESS is 1, just baseline beta.
-        s_sm.append(s_fit[1][0])
+        # First overall guess is s0, just baseline beta.
+        s_rf.append(s0)
+
+        dEds.append(self.__gradient(t0s[0],t1s[0],t2s[0], s_fit, variants, vaccines,
+                    data = new_positives, alignment = 40)[0])
+
+        # Second overall guess.
+
+        s_rf.append(s1)
 
         # Update the array and simulate.
-        for s_val in s_fit[1]:
-            s_val = s_sm[-1]
 
-        run_res = self.run(t2s[0], s_fit, variants = variants, vaccines = vaccines)
-        (ts,s,e,u,i,r,tot,phi_se,phi_eu,phi_ui,phi_ur,phi_ir,phi_rs,phi_v) = run_res
+        s_fit[1][0:] = s_rf[-1]
         
-        timestep0 = t0s[0]*pts_per_day
-        timestep1 = t1s[0]*pts_per_day
-        timestep2 = t2s[0]*pts_per_day
+        dEds.append(self.__gradient(t0s[0],t1s[0],t2s[0], s_fit, variants, vaccines,
+                    data = new_positives, alignment = 40)[0])
 
-        # Select only the part of the simulation between t1 and t2.
-        phi_pred = phi_ui[timestep1 : timestep2]
-
-        # Then sum all the contributes of each dt for each day.        
-        phi_pred = phi_pred.reshape(-1, pts_per_day).sum(axis=1)
-        
-        assert phi_pred.shape[0] == t2s[0] - t1s[0]
-
-        # Compute the gap between the prediction and the data.
-
-        gap = data[t1s[0] : t2s[0]] - phi_pred
-
-        print(phi_pred, gap)
-
-        # Now compute the linear response for the flow.
-        # First compute the concentration of Susceptibles
-        n_0 = s[timestep0] / (s[timestep0]+e[timestep0]+u[timestep0]+r[timestep0])
-        
-        # We also need the number of Unreported cases at t0. 
-        U0 = u[timestep0]
-
-        # We need to get the parameters of the current Unreported
-        # and Exposed exit distribution.
-        cur_rho_e_idx = np.searchsorted(self.rho_e_t, t0s[0], side = 'right') - 1
-        cur_rho_u_idx = np.searchsorted(self.rho_u_t, t0s[0], side = 'right') - 1
-        
-        T_E     = self.rho_e_mus[cur_rho_e_idx]
-        T_U     = self.rho_u_mus[cur_rho_u_idx]
-        sigma_U = self.rho_u_sigmas[cur_rho_u_idx]
-
-        a = T_U**2/sigma_U**2
-        b = T_U/sigma_U**2
-
-        # We can now compute the local Lyapunov exponent. 
-        
-        mu_   = mu(self.beta, n_0, s_sm[-1], T_U, T_E, self.alpha, a)
-        
-        print()
-        print("MU = ",mu_)
-        print()
-        
-        # And its susceptivity.
-
-        dmuds_ = susceptivity(mu_, self.beta, n_0, s_sm[-1], T_U, T_E, self.alpha, a)
-        
-        # Generate fit timesteps.
-
-        fit_timesteps  = np.arange(t1s[0], t2s[0], 1.)
-        conv_timesteps = np.arange(0, t2s[0]-t0s[0], 1.)
-
-        print(gap, gap.shape[0])
-        print(fit_timesteps, fit_timesteps.shape[0])
-    
-        lrt_Udot_vals = lrt_Udot(conv_timesteps, t0s[0], mu_, dmuds_, U0, T_U)
-        k_vals= k(conv_timesteps, a, b).real
-
-        print(lrt_Udot_vals)
-        print(k_vals)
-
-        conv = np.convolve(k_vals, lrt_Udot_vals)[t1s[0]-t0s[0]:t2s[0]-t0s[0]]
-        
-        print(conv)
-
-        assert 0 == 1
-
-        # SECOND OVERALL GUESS.
-
-        s_sm.append(s_fit[1][0]*0.9) # PLACEHOLDER
-
-        return 
         for idx, (t0, t1, t2) in enumerate(zip(t0s, t1s, t2s)):
-            print(s_sm)
-            print(np.fabs(s_sm[-1]-s_sm[-2])>1e-4) 
-            while (np.fabs(s_sm[-1]-s_sm[-2])>1e-4) and (np.fabs(dEds[-1])>1e-4):
+
+            print(f'Minimizing over [{t1}, {t2}] ({idx}-th interval), b.p. in {t0}.')
+            run_condition =   ((abs(dEds[-1]) > gtol)
+                           and (abs(dEds[-1] - dEds[-2]) > dgtol)
+                           and (abs(s_rf[-1] - s_rf[-2]) > dstol))
+            if idx != 0:
+                run_condition = True
+
+            forced_iterations = 3
+            lidx = 0
+
+            while run_condition or (lidx <= forced_iterations):
+                lidx += 1
 
                 # Compute new approximation for the root.
-                s_sm.append(s_sm[-1]-dEds[-1]*(s_sm[-1]-s_sm[-2])/(dEds[-1]-dEds[-2]))
-                
-                # Update s for the future 
-                s_fit[1][idx:] = s_sm[-1]
-                
-        pass
-   #def fit_to_data(data = new_positives, fit_period = 7, start_day = data_beg_day,
-#                days = 300, dt = _DT_, beta = 1/1.2, alpha = .14, 
-#                N = 886891, norm = _NORM_, s0 =  1.,
-#                pars_e = pars_e_test, pars_i = pars_i_test, 
-#                pars_u = pars_u_test, pars_r = pars_r_test, 
-#                variants = var_test, vaccines = vacc_test,
-#                return_new_positives = True, return_vaccinated = False):
-#
-#    global _DT_, _NORM_
-#    _DT_ = dt
-#    _NORM_ = norm
-#
-#    assert days <= data.shape[-1]
-#    # Calculate number of iterations
-#    max_step = int(np.rint(days / dt))
-#    
-#    # Create fit interval limits
-#    fit_limits = np.array([i * fit_period for i in range(int(days//fit_period)+1)])
-#    fit_pairs  = zip(fit_limits[:-1], fit_limits[1:])
-#    
-#    # Main simulation loop
-#    
-#
-#    t = np.array([t for t in range(max_step+1)])
-#    if return_new_positives:
-#        if return_vaccinated:
-#            return (t, S, E, I, U, R, Phi_UI, Phi_V, TOT)
-#        else:
-#            return (t, S, E, I, U, R, Phi_UI, TOT)
-#    else:
-#        if return_vaccinated:
-#            return(t, S, E, I, U, R, Phi_V, TOT)
-#        else:
-#            return (t, S, E, I, U, R, TOT)
+
+                # Boosted bisection
+                #next_s = s_rf[-1] - dEds[
+
+                # Secant method
+                next_s = s_rf[-1]-dEds[-1]*(s_rf[-1]-s_rf[-2])/(dEds[-1]-dEds[-2])
+                s_rf.append(next_s if next_s > 0. else 5e-2)
+
+                # Update the array and simulate.
+                s_fit[1][idx:] = s_rf[-1]
+
+                dEds.append(self.__gradient(t0, t1, t2, s_fit, variants, 
+                            vaccines, data = new_positives, alignment = 40)[0])
+
+                run_condition =((abs(dEds[-1]) > gtol)
+                            and (abs(dEds[-1] - dEds[-2]) > dgtol)
+                            and (abs(s_rf[-1] - s_rf[-2]) > dstol))
+
+                print('Continuation conditions are:')
+                print(f'abs(dEds[-1]) ({abs(dEds[-1]):.3f}) > gtol ({gtol:.3f}):', 
+                      abs(dEds[-1]) > gtol)
+                print(f'abs(dEds[-1] - dEds[-2]) ({(abs(dEds[-1] - dEds[-2])):.3f}) > dgtol ({dgtol:.3f}):', 
+                            abs(dEds[-1] - dEds[-2]) > dgtol)
+                print(f'abs(s_rf[-1] - s_rf[-2]) ({abs(s_rf[-1] - s_rf[-2]):.3f})> dstol ({dstol:.3f}):', 
+                            abs(s_rf[-1] - s_rf[-2]) > dstol)
+                print('idx =', idx)
+                print('lidx =', lidx)
+            print("****Proceeding to new time interval.****")
+
+        return 0 
 
 def test_model(days = 200, dt = _DT_, norm = False):
     print("Simulate", days, "days with a {:.2f}".format(dt), "day resolution.")
@@ -614,79 +645,9 @@ def test_model(days = 200, dt = _DT_, norm = False):
               dist_u = dist_u_test, 
               dist_r = dist_r_test)
     
-    m.fit_to_data(7, 20, 2, 7,  s0 = 1.0, variants = var_test, 
-                  vaccines = vacc_test, data = new_positives)
-
-    _   = m.run_and_emplace(days//4, s = s_test, variants = var_test, vaccines = vacc_test)
-    _   = m.run_and_emplace(days//2, s = s_test, variants = var_test, vaccines = vacc_test)
-    res = m.run_and_emplace(days, s = s_test, variants = var_test, vaccines = vacc_test)
-    t,s,e,u,i,r,tot,phi_se,phi_eu,phi_ui,phi_ur,phi_ir,phi_rs,phi_v = res
-    print(t.size, t.max()/dt)
-#Test flow reconstruction
-
-    kernel = k(t, alpha, beta).real
-    
-    du = u[1:] - u[:-1]
-    
-    conv = np.convolve(kernel, du[:t.shape[0]//3])[:t.shape[0]//3] * 0.14 * dt
-
-#%% Graphics
-    
-    plt.rcParams["figure.autolayout"] = True
-     
-    fig, ax = plt.subplots(2,1, figsize = (12,8), sharex = True)
-
-    ax[0].plot(t, s, label = 'S')
-    ax[0].plot(t, e, label = 'E')
-    ax[0].plot(t, i, label = 'I')
-    ax[0].plot(t, u, label = 'U')
-    ax[0].plot(t, r, label = 'R')
-    ax[0].plot(t, tot, label = 'R')
-    
-    newp = phi_ui[:t.size]
-
-    ax[1].plot(t, newp, label = 'New positive cases')    
-    ax[1].plot(t[:t.size//3], conv, label = r'$a \ast \dot{U}(t)$ np.conv', color = 'red',
-               linestyle = "dashed") 
-    ax[1].set_xlabel('Days since the beginning of the epidemic', fontsize = 14)
-    ax[1].set_ylabel('Individuals', fontsize = 14)
-    ax[1].set_ylim(bottom = 0)
-
-    ax[0].legend(fontsize = 14)
-    ax[1].legend(fontsize = 14, loc = "upper left")
-    plt.show()
-    #df_test = pd.read_csv('../effective/out.csv')
-     
-    #ax[0].scatter(df_test['t'], df_test.S, label = 'S', marker='+', color='C0')
-    #ax[0].scatter(df_test['t'], df_test.E, label = 'E', marker='+', color='C1')
-    #ax[0].scatter(df_test['t'], df_test.I, label = 'I', marker='+', color='C2')
-    #ax[0].scatter(df_test['t'], df_test.U, label = 'U', marker='+', color='C3')
-    #ax[0].scatter(df_test['t'], df_test.R, label = 'R', marker='+', color='C4')
-    
-    fig2, ax2 = plt.subplots(figsize = (12,8))
-
-    ax2.plot([idx*dt for idx in range(len(phi_se))], phi_se,    label = r'$\phi_{SE}$')
-    ax2.plot([idx*dt for idx in range(len(phi_eu))], phi_eu,    label = r'$\phi_{EU}$')
-    ax2.plot([idx*dt for idx in range(len(phi_ui))], phi_ui,    label = r'$\phi_{UI}$')
-    ax2.plot([idx*dt for idx in range(len(phi_ir))], phi_ir,    label = r'$\phi_{IR}$')
-    ax2.plot([idx*dt for idx in range(len(phi_ur))], phi_ur,    label = r'$\phi_{UR}$')
-    ax2.plot([idx*dt for idx in range(len(phi_rs))], phi_rs,    label = r'$\phi_{RS}$')
-    ax2.legend()
-
-    if norm:
-        ax[0].set_ylim(bottom = 0, top = 0.0025)
-        ax[0].set_ylabel('Population Fraction', fontsize = 14)
-    else:
-        ax[0].set_ylim(bottom = 0)#, top = 250000)
-        ax[0].set_ylabel('Individuals', fontsize = 14)
-
-    ax[0].set_xlim([0, max(t)])
-
-    #ax[0].vlines(var_test[0], *ax[0].get_ylim(), linestyle = 'dashed',
-    #             color = 'red', label = 'Variant arrival')
-    #ax[0].vlines(vacc_test[0], *ax[0].get_ylim(), linestyle = 'dashed',
-    #             color = 'blue', label = 'Beginning of vaccination')
-
+    m.fit_to_data(fit_period = 8, n_periods = 10, rel_t1 = 2, rel_t2 = 8,  
+                  s0 = 1.1, s1 = 0.9, variants = var_test, 
+                  vaccines = vacc_test, data = new_positives, alignment = 27)
 
 if __name__ == "__main__":
     test_model(dt = _DT_, norm = False)
